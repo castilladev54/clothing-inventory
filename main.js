@@ -124,6 +124,7 @@ function adjustButtons() {
 setTimeout(adjustButtons, 500);
 
 let productDataCache = {};
+
 let resumenFinancieroChart, tendenciasChart;
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -223,15 +224,31 @@ function setupForms() {
     document.getElementById('resumenComprasBtn').addEventListener('click', () => loadSummary('Compras'));
 
     // Dashboard
-    document.getElementById('cargarInventarioBtn').addEventListener('click', loadInventario);
+    // Dashboard
+    document.getElementById('cargarInventarioBtn').addEventListener('click', fetchInventario);
     document.getElementById('cargarDatosGraficosBtn').addEventListener('click', handleLoadDashboard);
     document.getElementById('calcularResumenBtn').addEventListener('click', calcularResumenFinanciero);
+
+    // Búsqueda en Inventario en tiempo real
+    const searchInput = document.getElementById('searchInventario');
+    if (searchInput) {
+        searchInput.addEventListener('input', (e) => {
+            const term = e.target.value.toLowerCase().trim();
+            const filtered = inventarioCache.filter(p => {
+                const nombre = String(p.nombre || '').toLowerCase();
+                const codigo = String(p.código || '').toLowerCase();
+                const id = String(p.id || '').toLowerCase();
+                return nombre.includes(term) || codigo.includes(term) || id.includes(term);
+            });
+            renderInventario(filtered);
+        });
+    }
 }
 
 // ================= DASHBOARD FUNCTIONS =================
 
 async function handleLoadDashboard() {
-    await calcularResumenFinanciero();
+    await calcularResumenFinancieroHoy();
     await cargarDatosGraficos();
 }
 
@@ -626,39 +643,66 @@ async function handleTransactionPost(e, type) {
     }
 }
 
-async function loadInventario() {
+// Nueva función para solo renderizar (Separación de cargas)
+function renderInventario(productos) {
+    const tableBody = document.getElementById('inventarioTableBody');
+
+    if (!productos || productos.length === 0) {
+        tableBody.innerHTML = '<tr><td colspan="6" class="text-center">No se encontraron productos.</td></tr>';
+        return;
+    }
+
+    tableBody.innerHTML = productos.map(p => {
+        const stockStyle = p.stock < 5 ? 'style="color: var(--danger-color); font-weight: bold;"' : '';
+        return `
+            <tr>
+                <td>${p.nombre}</td>
+                <td>${p.código}</td>
+                <td>${p.categoría}</td>
+                <td ${stockStyle}>${p.stock}</td>
+                <td>$${p.precio_venta.toFixed(2)} / Bs ${convertirUsdABs(p.precio_venta).toFixed(2)}</td>
+                <td>          
+                    <button class="btn btn-edit" onclick="editProducto('${p.id}')" title="Editar">
+                        ✏️
+                    </button>
+                    <button class="btn btn-delete" onclick="deleteProducto('${p.id}')" title="Eliminar" style="margin-left:5px;">
+                        🗑️
+                    </button>
+                </td>
+            </tr>
+        `;
+    }).join('');
+
+    // Re-optimizar tablas para móviles si es necesario
+    setTimeout(optimizeTablesForMobile, 100);
+}
+
+async function fetchInventario() {
     displayStatus('statusInventario', 'info', 'Cargando datos de inventario...');
     const tableBody = document.getElementById('inventarioTableBody');
-    tableBody.innerHTML = '<tr><td colspan="6">Cargando...</td></tr>';
+    tableBody.innerHTML = '<tr><td colspan="6" class="text-center"><i class="fas fa-spinner fa-spin"></i> Cargando...</td></tr>';
 
     try {
         const response = await fetch(`${SCRIPT_URL}?action=getInventario`);
         const data = await response.json();
 
-        if (data.status === 'success' && data.data && data.data.length > 0) {
-            displayStatus('statusInventario', 'success', `Inventario cargado: ${data.data.length} productos.`);
-            tableBody.innerHTML = data.data.map(p => {
-                const stockStyle = p.stock < 5 ? 'style="color: var(--danger-color); font-weight: bold;"' : '';
-                return `
-                            <tr>
-                                <td>${p.id}</td>
-                                <td>${p.nombre}</td>
-                                <td>${p.código}</td>
-                                <td>${p.categoría}</td>
-                                <td ${stockStyle}>${p.stock}</td>
-                                <td>$${p.precio_venta.toFixed(2)} / Bs ${convertirUsdABs(p.precio_venta).toFixed(2)}</td>
-                            </tr>
-                        `;
-            }).join('');
+        if (data.status === 'success' && data.data) {
+            inventarioCache = data.data; // Guardar en caché
+            displayStatus('statusInventario', 'success', `Inventario actualizado: ${data.data.length} productos.`);
+            renderInventario(inventarioCache);
         } else {
-            displayStatus('statusInventario', 'warning', data.message);
-            tableBody.innerHTML = '<tr><td colspan="6">No hay productos en inventario.</td></tr>';
+            inventarioCache = [];
+            displayStatus('statusInventario', 'warning', data.message || 'No hay datos.');
+            renderInventario([]);
         }
     } catch (error) {
         displayStatus('statusInventario', 'error', `Error al cargar inventario: ${error.message}`);
-        tableBody.innerHTML = '<tr><td colspan="6">Error al cargar datos.</td></tr>';
+        tableBody.innerHTML = '<tr><td colspan="6">Error de conexión. Intente nuevamente.</td></tr>';
     }
 }
+
+// Mantener compatibilidad con llamadas antiguas si las hay, aunque ya reemplazamos los eventos
+const loadInventario = fetchInventario;
 
 async function loadSummary(type) {
     const sheetName = type === 'Ventas' ? 'VENTAS' : 'COMPRAS';
@@ -733,3 +777,131 @@ function displayStatus(elementId, type, message) {
     el.className = `status-message ${type}`;
     el.innerHTML = `<i class="fas fa-${type === 'success' ? 'check' : type === 'error' ? 'times' : type === 'warning' ? 'exclamation-triangle' : 'info'}-circle"></i> ${message}`;
 }
+
+async function editProducto(id) {
+    const producto = productDataCache[id];
+    if (!producto) {
+        alert('Producto no encontrado.');
+        return;
+    }
+
+    const nombre = prompt('Editar Nombre:', producto.nombre);
+    if (nombre === null) return; // Cancelado
+
+    const codigo = prompt('Editar Código:', producto.código);
+    if (codigo === null) return;
+
+    const categoria = prompt('Editar Categoría:', producto.categoría);
+    if (categoria === null) return;
+
+    const precio = prompt('Editar Precio Venta:', producto.precio_venta);
+    if (precio === null || isNaN(precio)) return alert('Precio inválido.');
+
+    const stock = prompt('Editar Stock:', producto.stock);
+    if (stock === null || isNaN(stock)) return alert('Stock inválido.');
+
+    // Preparar datos para enviar al backend
+    const data = {
+        action: 'updateProducto',
+        id: id,
+        nombre: nombre.trim(),
+        codigo: codigo.trim(),
+        categoria: categoria.trim(),
+        precio_venta: parseFloat(precio),
+        stock: parseInt(stock, 10)
+    };
+
+    try {
+        const res = await fetch(SCRIPT_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+            body: JSON.stringify(data)
+        });
+        const result = await res.json();
+
+        if (result.status === 'success') {
+            alert('Producto actualizado correctamente.');
+            fetchInventario(); // Recarga tabla con datos actualizados
+        } else {
+            alert('Error: ' + result.message);
+        }
+    } catch (error) {
+        alert('Error de conexión: ' + error.message);
+    }
+}
+
+async function calcularResumenFinancieroHoy() {
+    displayStatus('statusDashboard', 'info', 'Calculando resumen financiero para hoy...');
+
+    try {
+        const [ventasResponse, comprasResponse] = await Promise.all([
+            fetch(`${SCRIPT_URL}?action=getData&sheetName=VENTAS`),
+            fetch(`${SCRIPT_URL}?action=getData&sheetName=COMPRAS`)
+        ]);
+
+        const ventasData = await ventasResponse.json();
+        const comprasData = await comprasResponse.json();
+
+        // Función para formatear fecha en 'YYYY-MM-DD'
+        function formatDate(dateString) {
+            const d = new Date(dateString);
+            const y = d.getFullYear();
+            const m = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            return `${y}-${m}-${day}`;
+        }
+
+        const hoy = formatDate(new Date());
+
+        // Filtrar ventas del día de hoy y acumular
+        let totalVentasHoy = 0;
+        if (ventasData.status === 'success' && ventasData.data) {
+            ventasData.data.forEach(venta => {
+                if (formatDate(venta.fecha) === hoy) {
+                    totalVentasHoy += parseFloat(venta.cantidad) * parseFloat(venta.precio_venta);
+                }
+            });
+        }
+
+        // Filtrar compras del día de hoy y acumular
+        let totalComprasHoy = 0;
+        if (comprasData.status === 'success' && comprasData.data) {
+            comprasData.data.forEach(compra => {
+                if (formatDate(compra.fecha) === hoy) {
+                    totalComprasHoy += parseFloat(compra.cantidad) * parseFloat(compra.precio_compra);
+                }
+            });
+        }
+
+        const gananciasHoy = totalVentasHoy - totalComprasHoy;
+
+        // Actualizar estadísticas del día
+        document.getElementById('totalVentas').textContent = `$${totalVentasHoy.toFixed(2)}`;
+        document.getElementById('totalCompras').textContent = `$${totalComprasHoy.toFixed(2)}`;
+        document.getElementById('totalGanancias').textContent = `$${gananciasHoy.toFixed(2)}`;
+        document.getElementById('totalGastos').textContent = `$${totalComprasHoy.toFixed(2)}`;
+
+        // Colores según ganancias
+        const gananciasElement = document.getElementById('totalGanancias');
+        if (gananciasHoy > 0) {
+            gananciasElement.style.color = 'var(--secondary-color)';
+        } else if (gananciasHoy < 0) {
+            gananciasElement.style.color = 'var(--danger-color)';
+        } else {
+            gananciasElement.style.color = '#666';
+        }
+
+        displayStatus('statusDashboard', 'success', `Resumen calculado para hoy (${hoy}): Ventas: $${totalVentasHoy.toFixed(2)} | Compras: $${totalComprasHoy.toFixed(2)} | Ganancia: $${gananciasHoy.toFixed(2)}`);
+
+        return {
+            totalVentas: totalVentasHoy,
+            totalCompras: totalComprasHoy,
+            ganancias: gananciasHoy
+        };
+
+    } catch (error) {
+        displayStatus('statusDashboard', 'error', `Error al calcular resumen: ${error.message}`);
+        return { totalVentas: 0, totalCompras: 0, ganancias: 0 };
+    }
+}
+
