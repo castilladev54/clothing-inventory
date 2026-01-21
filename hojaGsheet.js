@@ -430,39 +430,6 @@ function resetearBaseDeDatos() {
   return { status: "success", message: `Base de datos reseteada completamente: ${msg.join(" ")}` };
 }
 
-function updateProducto(data) {
-  const ss = getSpreadsheet();
-  const sheet = ss.getSheetByName("Productos");
-  if (!sheet) {
-    return { status: "error", message: "Hoja de productos no encontrada." };
-  }
 
-  const { rowIndex } = findProductRow(sheet, data.id);
-  if (rowIndex === -1) {
-    return { status: "error", message: "Producto no encontrado para actualizar." };
-  }
-
-  try {
-    // Columnas según encabezados: id=1, nombre=2, código=3, categoría=4, precio_compra=5, precio_venta=6, stock=7
-    // Nota: Google Sheets es base 1 para filas y columnas
-
-    sheet.getRange(rowIndex + 1, 2).setValue(data.nombre);
-    sheet.getRange(rowIndex + 1, 3).setValue(data.codigo);
-    sheet.getRange(rowIndex + 1, 4).setValue(data.categoria);
-    // Si quieres actualizar precio de venta (columna 6)
-    if (data.precio_venta !== undefined) {
-      sheet.getRange(rowIndex + 1, 6).setValue(parseFloat(data.precio_venta));
-    }
-    // Si quieres actualizar stock (columna 7)
-    if (data.stock !== undefined) {
-      sheet.getRange(rowIndex + 1, 7).setValue(parseInt(data.stock));
-    }
-
-    return { status: "success", message: "Producto actualizado correctamente." };
-
-  } catch (e) {
-    return { status: "error", message: `Error al actualizar producto: ${e.message}` };
-  }
-}
 
 
